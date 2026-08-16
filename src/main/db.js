@@ -34,7 +34,8 @@ export function initDatabase(dbPath) {
       parent_id INTEGER,
       name TEXT NOT NULL,
       type TEXT NOT NULL CHECK (type IN ('expense', 'income')),
-      sort_order INTEGER DEFAULT 0
+      sort_order INTEGER DEFAULT 0,
+      is_custom INTEGER NOT NULL DEFAULT 0
     );
     CREATE TABLE IF NOT EXISTS transactions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -52,6 +53,11 @@ export function initDatabase(dbPath) {
       value TEXT
     );
   `)
+  // 老版本数据库没有"是否用户创建"标记列，这里自动补上（相当于给数据库做了一次小升级）
+  const cols = db.prepare('PRAGMA table_info(categories)').all()
+  if (!cols.some((c) => c.name === 'is_custom')) {
+    db.exec('ALTER TABLE categories ADD COLUMN is_custom INTEGER NOT NULL DEFAULT 0')
+  }
   seedCategoriesIfEmpty()
 }
 
@@ -74,8 +80,61 @@ function seedCategoriesIfEmpty() {
 // —— 分类 ——
 export function getCategories() {
   return db
-    .prepare('SELECT id, parent_id AS parentId, name, type FROM categories ORDER BY type, sort_order, id')
+    .prepare(
+      'SELECT id, parent_id AS parentId, name, type, is_custom AS isCustom FROM categories ORDER BY type, sort_order, id'
+    )
     .all()
+}
+
+// —— 分类管理（用户新增/改名/删除自己创建的分类；预置分类不可动）——
+function validateName(name) {
+  name = (name || '').trim()
+  if (!name) return { ok: false, message: '分类名称不能为空' }
+  if (name.length > 20) return { ok: false, message: '分类名称不能超过 20 个字' }
+  return { ok: true, name }
+}
+
+export function addCategory({ type, name, parentId }) {
+  const v = validateName(name)
+  if (!v.ok) return v
+  if (parentId != null) {
+    const parent = db
+      .prepare('SELECT id, type, parent_id AS parentId FROM categories WHERE id = ?')
+      .get(parentId)
+    if (!parent || parent.parentId != null) return { ok: false, message: '所选的大类不存在' }
+    if (parent.type !== type) return { ok: false, message: '大类与收支类型不匹配' }
+  }
+  const { so } = db
+    .prepare(
+      'SELECT COALESCE(MAX(sort_order), -1) + 1 AS so FROM categories WHERE type = ? AND parent_id IS ?'
+    )
+    .get(type, parentId ?? null)
+  const info = db
+    .prepare(
+      'INSERT INTO categories (parent_id, name, type, sort_order, is_custom) VALUES (?, ?, ?, ?, 1)'
+    )
+    .run(parentId ?? null, v.name, type, so)
+  return { ok: true, id: info.lastInsertRowid }
+}
+
+export function updateCategory(id, { name }) {
+  const v = validateName(name)
+  if (!v.ok) return v
+  const info = db.prepare('UPDATE categories SET name = ? WHERE id = ? AND is_custom = 1').run(v.name, id)
+  if (info.changes === 0) return { ok: false, message: '预置分类不能修改' }
+  return { ok: true }
+}
+
+export function deleteCategory(id) {
+  const cat = db.prepare('SELECT is_custom AS isCustom FROM categories WHERE id = ?').get(id)
+  if (!cat) return { ok: false, message: '分类不存在' }
+  if (!cat.isCustom) return { ok: false, message: '预置分类不能删除' }
+  const child = db.prepare('SELECT COUNT(*) AS c FROM categories WHERE parent_id = ?').get(id)
+  if (child.c > 0) return { ok: false, message: '该分类下还有小类，请先删除这些小类' }
+  const tx = db.prepare('SELECT COUNT(*) AS c FROM transactions WHERE category_id = ?').get(id)
+  if (tx.c > 0) return { ok: false, message: '该分类下已有账单记录，不能直接删除。请先把这些账单改成其他分类' }
+  db.prepare('DELETE FROM categories WHERE id = ?').run(id)
+  return { ok: true }
 }
 
 // —— 记账 ——

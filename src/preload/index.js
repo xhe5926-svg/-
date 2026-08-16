@@ -4,6 +4,9 @@ import { contextBridge, ipcRenderer } from 'electron'
 
 const api = {
   getCategories: () => ipcRenderer.invoke('db:getCategories'),
+  addCategory: (data) => ipcRenderer.invoke('db:addCategory', data),
+  updateCategory: (id, data) => ipcRenderer.invoke('db:updateCategory', { id, ...data }),
+  deleteCategory: (id) => ipcRenderer.invoke('db:deleteCategory', id),
   addTransaction: (data) => ipcRenderer.invoke('db:addTransaction', data),
   updateTransaction: (id, data) => ipcRenderer.invoke('db:updateTransaction', { id, ...data }),
   deleteTransaction: (id) => ipcRenderer.invoke('db:deleteTransaction', id),

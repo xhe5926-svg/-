@@ -57,7 +57,7 @@
 | 理财收入 | 利息 / 基金股票收益 |
 | 其他收入 | 红包 / 报销 / 兼职 / 其他 |
 
-> 分类数据在数据库初始化时写入，后续如需增删分类，需用户确认后修改。
+> **分类管理规则**：以上 74 个为**预置分类**，用户在界面中不可修改（带"预置"标签）。用户可随时**新增**分类（新大类或在大类下加小类），并可对**自己创建的分类**进行**改名、删除**。删除保护规则：分类下已有账单记录的不能删除（需先把账单改成其他分类）；大类下还有小类的不能删除（需先删小类）。分类名限 20 个字。
 
 ### 2.3 数据存储约定
 
@@ -99,6 +99,7 @@
 | 2026-08-16 | 界面组件库 | Element Plus | 成熟、中文文档完善（琐碎细节，Claude 决定） |
 | 2026-08-16 | 图表库 | ECharts | 中文出品、文档完善、图表美观（琐碎细节，Claude 决定） |
 | 2026-08-16 | 代码版本管理 | 加入 git 管理（本地仓库） | 防止代码丢失、可随时回退版本；不上传任何网络 |
+| 2026-08-16 | 分类管理：删除规则 | 有账单记录的分类不能直接删 | 保护用户数据，需先把账单改成其他分类才能删除 |
 
 ---
 
@@ -142,7 +143,8 @@
 - [x] 统计页（趋势图、分类占比饼图、每日支出柱状图）
 - [x] 预算页（月度预算、进度条、超支提醒）
 - [x] 设置页（Excel 导出）
-- [x] Windows 打包验证（`dist/黑马记账 Setup 1.0.0.exe`，win-unpacked 为免安装版）
+- [x] 分类管理（v1.1.0：新增/改名/删除自己创建的分类，预置分类不可改；删除保护规则见 2.2）
+- [x] Windows 打包验证（`dist/黑马记账 Setup 1.0.0.exe`，win-unpacked 为免安装版；v1.1.0 已重新打包含分类管理）
 - [x] git 版本管理（首版已提交：v1.0.0；提交签名：黑马记账 <heima@local>）
 - [ ] Mac 打包（需 Mac 电脑，代码相同）
 
@@ -154,3 +156,4 @@
 4. **npm 镜像**：.npmrc 已配置 npmmirror 国内镜像加速（npm 会提示 electron_mirror 键"未知"，属无害警告，忽略即可）。
 5. **打包配置**：electron-builder.yml 里 `npmRebuild: false`（本机无 Visual Studio 编译环境；better-sqlite3 是 N-API 通用模块，dev 验证过的二进制直接可用）。打包前需 `export ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/` 走国内镜像下载打包工具。
 6. **用户数据目录**：实测打包版与开发版共用 `%APPDATA%\heima-bookkeeping\heima.db`（Electron 读 package.json 的 name 而非 productName）。数据互通无碍；若将来想改目录名需在 main 里 `app.setName()` 并迁移数据。
+7. **数据库升级**：老版本数据库没有 `is_custom` 列（v1.0.0 建的库），`initDatabase` 里用 `PRAGMA table_info` 检测并 `ALTER TABLE` 自动补列，新老版本数据兼容。以后改表结构照此办理（先检测再迁移，别直接改 CREATE TABLE 就完事）。

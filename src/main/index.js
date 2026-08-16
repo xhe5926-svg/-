@@ -40,6 +40,9 @@ function createWindow() {
 // —— 注册界面与后台之间的通信通道 ——
 function registerIpcHandlers() {
   ipcMain.handle('db:getCategories', () => db.getCategories())
+  ipcMain.handle('db:addCategory', (_e, data) => db.addCategory(data))
+  ipcMain.handle('db:updateCategory', (_e, { id, ...data }) => db.updateCategory(id, data))
+  ipcMain.handle('db:deleteCategory', (_e, id) => db.deleteCategory(id))
   ipcMain.handle('db:addTransaction', (_e, data) => db.addTransaction(data))
   ipcMain.handle('db:updateTransaction', (_e, { id, ...data }) => db.updateTransaction(id, data))
   ipcMain.handle('db:deleteTransaction', (_e, id) => db.deleteTransaction(id))
