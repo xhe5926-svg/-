@@ -1,0 +1,28 @@
+appId: com.heima.bookkeeping
+productName: 黑马记账
+directories:
+  buildResources: build
+  output: dist
+files:
+  - out/**
+  - package.json
+  - build/icon.ico
+asar: true
+# 本机没有 Visual Studio 编译环境；better-sqlite3 是 N-API 模块，
+# 当前 node_modules 里的二进制已在 dev 模式验证可用，无需重新编译
+npmRebuild: false
+win:
+  icon: build/icon.ico
+  target:
+    - nsis
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: 黑马记账
+mac:
+  icon: build/icon.icns
+  target:
+    - dmg
+    - zip

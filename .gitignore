@@ -1,0 +1,13 @@
+# 依赖与构建产物（随时可重新生成）
+node_modules/
+out/
+dist/
+*.log
+.DS_Store
+
+# 安装到项目目录的应用本体与个人数据
+heima-bookkeeping/
+*.xlsx
+
+# Claude Code 本机配置
+.claude/
