@@ -1,7 +1,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { fmtMoney, currentMonth, todayStr } from '../utils/format'
+import { fmtMoney, currentMonth, todayStr, getBudgetAlert } from '../utils/format'
 
 const month = ref(currentMonth())
 const transactions = ref([])
@@ -22,7 +22,7 @@ const editNote = ref('')
 const parents = computed(() => categories.value.filter((c) => !c.parentId && c.type === editType.value))
 const editChildren = computed(() => categories.value.filter((c) => c.parentId === editParentId.value && c.type === editType.value))
 
-// 按日期分组
+// 按日期分组：同一天的账单归到一组，并算出当天支出/收入合计，方便页面按天展示
 const groups = computed(() => {
   const map = new Map()
   for (const t of transactions.value) {
@@ -36,19 +36,18 @@ const groups = computed(() => {
   })
 })
 
-const budgetAlertText = computed(() => {
-  const { budgetCents, spentCents } = budgetStatus.value
-  const pct = Math.round((spentCents / budgetCents) * 100)
-  if (spentCents >= budgetCents) return `本月已支出 ${fmtMoney(spentCents)}，已超支 ${fmtMoney(spentCents - budgetCents)}`
-  if (pct >= 80) return `本月已支出 ${fmtMoney(spentCents)}，已达预算 ${pct}%，即将超支`
-  return ''
-})
+// 预算提醒文案与等级（与记一笔页共用一套逻辑；没设预算时不显示提醒）
+const budgetAlert = computed(() =>
+  getBudgetAlert(budgetStatus.value.budgetCents, budgetStatus.value.spentCents)
+)
 
+// 把"2026-08-18"这样的日期翻译成"星期X"（按当天是星期几算）
 function weekday(dateStr) {
   return '星期' + '日一二三四五六'[new Date(dateStr).getDay()]
 }
 
 async function load() {
+  // 同时取本月的账单明细和收支合计，再读预算用于提醒
   ;[transactions.value, summary.value] = await Promise.all([
     window.api.getMonthTransactions(month.value),
     window.api.getMonthSummary(month.value)
@@ -62,10 +61,12 @@ async function load() {
 }
 
 async function loadCategories() {
+  // 读全部分类，编辑弹窗里选大类/小类要用
   categories.value = await window.api.getCategories()
 }
 
 // —— 编辑 ——
+// 打开编辑弹窗：把这笔账单的现有内容填进弹窗，并自动选中它所属的分类
 function openEdit(t) {
   editing.value = t
   editType.value = t.type
@@ -81,20 +82,31 @@ function openEdit(t) {
 async function saveEdit() {
   if (!editAmount.value || editAmount.value <= 0) return ElMessage.warning('金额不能为空')
   if (!editChildId.value) return ElMessage.warning('请选择分类')
-  await window.api.updateTransaction(editing.value.id, {
-    type: editType.value,
-    amountCents: Math.round(editAmount.value * 100),
-    categoryId: editChildId.value,
-    note: editNote.value.trim(),
-    date: editDate.value
-  })
-  editVisible.value = false
-  ElMessage.success('已保存修改')
-  load()
+  try {
+    const r = await window.api.updateTransaction(editing.value.id, {
+      type: editType.value,
+      amountCents: Math.round(editAmount.value * 100),
+      categoryId: editChildId.value,
+      note: editNote.value.trim(),
+      date: editDate.value
+    })
+    // 后台校验不通过时，把它的提示原样告诉用户
+    if (r && r.ok === false) {
+      ElMessage.error(r.message || '保存失败，请重试')
+      return
+    }
+    editVisible.value = false
+    ElMessage.success('已保存修改')
+    load()
+  } catch {
+    // 后台报错时不能静默，要明确告诉用户没存上
+    ElMessage.error('保存失败，请重试')
+  }
 }
 
 async function remove(t) {
   try {
+    // 先弹确认框；用户点"取消"会走到 catch 里，直接返回什么都不做
     await ElMessageBox.confirm(`确定删除这笔${t.type === 'expense' ? '支出' : '收入'}吗？`, '删除确认', {
       type: 'warning',
       confirmButtonText: '删除',
@@ -103,9 +115,13 @@ async function remove(t) {
   } catch {
     return
   }
-  await window.api.deleteTransaction(t.id)
-  ElMessage.success('已删除')
-  load()
+  try {
+    await window.api.deleteTransaction(t.id)
+    ElMessage.success('已删除')
+    load()
+  } catch {
+    ElMessage.error('删除失败，请重试')
+  }
 }
 
 onMounted(() => {
@@ -127,9 +143,9 @@ onMounted(() => {
         <div class="sum-item">本月结余 <b>{{ fmtMoney(summary.income - summary.expense) }}</b></div>
       </div>
       <el-alert
-        v-if="budgetAlertText"
-        :title="budgetAlertText"
-        :type="budgetStatus.spentCents >= budgetStatus.budgetCents ? 'error' : 'warning'"
+        v-if="budgetAlert.text"
+        :title="budgetAlert.text"
+        :type="budgetAlert.type"
         :closable="false"
         show-icon
         class="budget-alert"

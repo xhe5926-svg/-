@@ -1,7 +1,7 @@
 <script setup>
 import { ref, onMounted, onBeforeUnmount } from 'vue'
 import * as echarts from 'echarts'
-import { fmtMoney, currentMonth } from '../utils/format'
+import { fmtMoney, currentMonth, monthLabel } from '../utils/format'
 
 const month = ref(currentMonth())
 const summary = ref({ expense: 0, income: 0 })
@@ -13,20 +13,20 @@ let trendChart = null
 let pieChart = null
 let barChart = null
 
+// 三个图表的主题色：支出红、收入绿、柱状图蓝
 const MONTH_COLOR = '#f56c6c'
 const INCOME_COLOR = '#67c23a'
 const PRIMARY_COLOR = '#2b4bd8'
 
-function monthLabel(m) {
-  return `${Number(m.slice(5))}月`
-}
-
 async function load() {
+  // 月份切换时：重新算本月收支合计，并重画三个图表
   summary.value = await window.api.getMonthSummary(month.value)
   renderCharts()
 }
 
 async function renderCharts() {
+  // 三个图表的数据可以同时从后台取（互不依赖），取完一次性画出来
+  const [trend, breakdown, daily] = await Promise.all([
   const [trend, breakdown, daily] = await Promise.all([
     window.api.getTrend(6),
     window.api.getCategoryBreakdown(month.value),
@@ -100,6 +100,7 @@ async function renderCharts() {
   })
 }
 
+// 窗口大小变化时，三个图表跟着缩放，防止图表变形
 function resizeAll() {
   trendChart && trendChart.resize()
   pieChart && pieChart.resize()

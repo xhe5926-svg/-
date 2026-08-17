@@ -31,8 +31,11 @@ function createWindow() {
   }
 
   // 点击外部链接用系统浏览器打开（安全性）
+  // 只放行 http/https 链接；其它协议（比如 file:、自定义协议）一律拦下，防止打开奇怪的程序
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url)
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      shell.openExternal(url)
+    }
     return { action: 'deny' }
   })
 }

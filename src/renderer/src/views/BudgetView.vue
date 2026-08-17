@@ -3,15 +3,20 @@ import { ref, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { fmtMoney, currentMonth } from '../utils/format'
 
+// 预算金额（元，界面输入用）；保存后转成"分"存进数据库
 const budgetYuan = ref(null)
+// 已保存的预算（分）和本月已支出（分）
 const savedBudgetCents = ref(0)
 const spentCents = ref(0)
 
+// 已支出占预算的百分比（比如花了 80 元、预算 100 元，就是 80%）
 const pct = computed(() =>
   savedBudgetCents.value > 0 ? Math.round((spentCents.value / savedBudgetCents.value) * 100) : 0
 )
+// 预算还剩多少（分）；负数表示已经超支
 const remainingCents = computed(() => savedBudgetCents.value - spentCents.value)
 
+// 页面上的状态提示：未设预算 / 已超支 / 即将超支（花到 80%）/ 还剩多少
 const statusText = computed(() => {
   if (savedBudgetCents.value <= 0) return { text: '还未设置预算', type: 'info' }
   if (remainingCents.value < 0) return { text: `已超支 ${fmtMoney(-remainingCents.value)}`, type: 'danger' }
@@ -19,15 +24,18 @@ const statusText = computed(() => {
   return { text: `还剩 ${fmtMoney(remainingCents.value)} 可用`, type: 'success' }
 })
 
+// "接下来每天平均可花多少"：把剩余预算平均分给本月剩下的每一天（含今天）
 const dailyRemaining = computed(() => {
   if (savedBudgetCents.value <= 0 || remainingCents.value <= 0) return null
   const now = new Date()
   const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate()
   const daysLeft = daysInMonth - now.getDate() + 1
+  // 先算出每天能花的"分"，再转成"元"（除法后保留到分，避免显示一堆小数）
   return Math.round(remainingCents.value / Math.max(daysLeft, 1)) / 100
 })
 
 async function load() {
+  // 进入页面时读已保存的预算和本月支出，回填界面
   savedBudgetCents.value = await window.api.getBudget()
   const summary = await window.api.getMonthSummary(currentMonth())
   spentCents.value = summary.expense
@@ -39,6 +47,7 @@ async function saveBudget() {
     ElMessage.warning('请输入有效的预算金额')
     return
   }
+  // 界面输入的是"元"，转成"分"（整数）再存，避免小数计算误差
   await window.api.setBudget(Math.round(budgetYuan.value * 100))
   ElMessage.success('预算已保存')
   load()

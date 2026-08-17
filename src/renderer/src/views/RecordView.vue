@@ -1,7 +1,7 @@
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { ElMessage } from 'element-plus'
-import { todayStr, fmtMoney, currentMonth } from '../utils/format'
+import { todayStr, currentMonth, getBudgetAlert } from '../utils/format'
 
 // —— 状态 ——
 const type = ref('expense') // expense=支出 income=收入
@@ -13,21 +13,10 @@ const parentId = ref(null)
 const childId = ref(null)
 const budgetStatus = ref({ budgetCents: 0, spentCents: 0 })
 
-const budgetAlertText = computed(() => {
-  const { budgetCents, spentCents } = budgetStatus.value
-  const pct = Math.round((spentCents / budgetCents) * 100)
-  if (spentCents >= budgetCents)
-    return `本月已支出 ${fmtMoney(spentCents)}，已超支 ${fmtMoney(spentCents - budgetCents)}，注意节制哦！`
-  if (pct >= 80) return `本月已支出 ${fmtMoney(spentCents)}，已达预算的 ${pct}%，即将超支！`
-  return `本月已支出 ${fmtMoney(spentCents)}，预算还剩 ${fmtMoney(budgetCents - spentCents)}`
-})
-
-const budgetAlertType = computed(() => {
-  const { budgetCents, spentCents } = budgetStatus.value
-  if (spentCents >= budgetCents) return 'error'
-  if (spentCents >= budgetCents * 0.8) return 'warning'
-  return 'success'
-})
+// 预算提醒文案与等级（超支/即将超支/还剩多少），由公共函数计算，与流水页共用一套
+const budgetAlert = computed(() =>
+  getBudgetAlert(budgetStatus.value.budgetCents, budgetStatus.value.spentCents)
+)
 
 const parents = computed(() =>
   categories.value.filter((c) => !c.parentId && c.type === type.value)
@@ -46,16 +35,19 @@ const canSave = computed(() => amountCents.value > 0 && childId.value !== null)
 
 // —— 数据加载 ——
 async function loadCategories() {
+  // 从后台读全部分类，并把分类的"选择状态"重置为当前收支类型下的第一个大类
   categories.value = await window.api.getCategories()
   switchType()
 }
 
+// 切换支出/收入后，大类默认选中第一个，小类清空等待用户重新选择
 function switchType() {
   parentId.value = parents.value[0] ? parents.value[0].id : null
   childId.value = null
 }
 
 async function loadBudgetStatus() {
+  // 读本月预算；设了预算才算"本月已支出"，没设就显示空提醒
   const budget = await window.api.getBudget()
   if (budget > 0) {
     const summary = await window.api.getMonthSummary(currentMonth())
@@ -65,33 +57,42 @@ async function loadBudgetStatus() {
   }
 }
 
-// —— 金额键盘 ——
+// —— 金额键盘（点屏幕按钮和敲键盘都走这里，规则：最多 9 位整数 + 2 位小数）——
 function pressDigit(d) {
+  // 已有小数点时，小数部分最多 2 位（分），再多就不收
   if (amountStr.value.includes('.')) {
     const [, dec] = amountStr.value.split('.')
     if (dec.length >= 2) return
   }
+  // 整数部分最多 9 位，防止金额大到离谱
   const digits = amountStr.value.replace('.', '')
   if (digits.length >= 9) return
+  // 显示为"0"时直接按数字键，用数字替换掉开头的 0（比如"0"按 5 变成"5"而不是"05"）
   if (amountStr.value === '0' && d !== '.') amountStr.value = d
   else amountStr.value += d
 }
 
 function pressDot() {
+  // 小数点只能有一个；单独按小数点时显示成"0."
   if (!amountStr.value.includes('.')) {
     amountStr.value = amountStr.value ? amountStr.value + '.' : '0.'
   }
 }
 
 function pressBackspace() {
+  // 退格：删掉最后一位
   amountStr.value = amountStr.value.slice(0, -1)
 }
 
 function pressClear() {
+  // 清空金额
   amountStr.value = ''
 }
 
 function onGlobalKeydown(e) {
+  // 焦点在输入框里时（备注、日期等）不拦截按键，让输入框正常工作，防止打字误伤金额
+  const tag = e.target && e.target.tagName
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target && e.target.isContentEditable)) return
   if (e.key >= '0' && e.key <= '9') {
     pressDigit(e.key)
   } else if (e.key === '.') {
@@ -110,17 +111,27 @@ async function save() {
     else ElMessage.warning('请选择具体分类（二级小类）')
     return
   }
-  await window.api.addTransaction({
-    type: type.value,
-    amountCents: amountCents.value,
-    categoryId: childId.value,
-    note: note.value.trim(),
-    date: date.value
-  })
-  ElMessage.success('记账成功 🎉')
-  amountStr.value = ''
-  note.value = ''
-  loadBudgetStatus()
+  try {
+    const r = await window.api.addTransaction({
+      type: type.value,
+      amountCents: amountCents.value,
+      categoryId: childId.value,
+      note: note.value.trim(),
+      date: date.value
+    })
+    // 后台校验不通过（比如金额不合法）时，把它的提示原样告诉用户
+    if (r && r.ok === false) {
+      ElMessage.error(r.message || '保存失败，请重试')
+      return
+    }
+    ElMessage.success('记账成功 🎉')
+    amountStr.value = ''
+    note.value = ''
+    loadBudgetStatus()
+  } catch {
+    // 后台报错（比如数据库出问题）时不能静默，要明确告诉用户没存上
+    ElMessage.error('保存失败，请重试')
+  }
 }
 
 onMounted(() => {
@@ -135,9 +146,9 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onGlobalKeydown))
 <template>
   <div class="record-page">
     <el-alert
-      v-if="budgetStatus.budgetCents > 0"
-      :title="budgetAlertText"
-      :type="budgetAlertType"
+      v-if="budgetStatus.budgetCents > 0 && budgetAlert.text"
+      :title="budgetAlert.text"
+      :type="budgetAlert.type"
       :closable="false"
       show-icon
       class="budget-alert"

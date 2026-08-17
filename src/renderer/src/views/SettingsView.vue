@@ -5,6 +5,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 const appInfo = ref(null)
 
 async function exportExcel() {
+  // 导出结果分三种：成功 / 用户主动取消 / 失败，分别给不同提示
   const result = await window.api.exportExcel()
   if (result.ok) {
     ElMessage.success('导出成功！文件已保存到：' + result.path)
@@ -21,19 +22,23 @@ const dialogMode = ref('add') // add = 新增, rename = 改名
 const dialogName = ref('')
 const dialogTarget = ref(null) // 新增时: {parentId}，改名时: {id}
 
+// 当前收支类型下的一级大类（parentId 为空的就是大类）
 const catParents = computed(() =>
   categories.value.filter((c) => !c.parentId && c.type === catType.value)
 )
 
+// 某个大类下的全部小类
 function childrenOf(id) {
   return categories.value.filter((c) => c.parentId === id && c.type === catType.value)
 }
 
 async function loadCategories() {
+  // 从后台读全部分类，页面按大类分组展示
   categories.value = await window.api.getCategories()
 }
 
 function openAddParent() {
+  // 点"新增大类"：打开弹窗，parentId 传 null 表示加的是大类
   dialogMode.value = 'add'
   dialogTarget.value = { parentId: null }
   dialogName.value = ''
@@ -41,6 +46,7 @@ function openAddParent() {
 }
 
 function openAddChild(parent) {
+  // 点大类后面的"+ 新增小类"：parentId 记下所属大类，弹窗里填小类名
   dialogMode.value = 'add'
   dialogTarget.value = { parentId: parent.id }
   dialogName.value = ''
@@ -48,6 +54,7 @@ function openAddChild(parent) {
 }
 
 function openRename(cat) {
+  // 点"改名"：弹窗里预填现在的名字，方便直接改
   dialogMode.value = 'rename'
   dialogTarget.value = { id: cat.id }
   dialogName.value = cat.name
@@ -55,25 +62,33 @@ function openRename(cat) {
 }
 
 async function saveCategory() {
-  const r =
-    dialogMode.value === 'add'
-      ? await window.api.addCategory({
-          type: catType.value,
-          name: dialogName.value,
-          parentId: dialogTarget.value.parentId
-        })
-      : await window.api.updateCategory(dialogTarget.value.id, { name: dialogName.value })
-  if (r.ok) {
-    dialogVisible.value = false
-    ElMessage.success(dialogMode.value === 'add' ? '分类已添加' : '分类已改名')
-    loadCategories()
-  } else {
-    ElMessage.error(r.message)
+  // 新增和改名共用这一个弹窗，按 dialogMode 决定调哪个后台接口
+  try {
+    const r =
+      dialogMode.value === 'add'
+        ? await window.api.addCategory({
+            type: catType.value,
+            name: dialogName.value,
+            parentId: dialogTarget.value.parentId
+          })
+        : await window.api.updateCategory(dialogTarget.value.id, { name: dialogName.value })
+    if (r.ok) {
+      dialogVisible.value = false
+      ElMessage.success(dialogMode.value === 'add' ? '分类已添加' : '分类已改名')
+      loadCategories()
+    } else {
+      // 后台校验不通过（重名、超长、预置分类等），把原因原样告诉用户
+      ElMessage.error(r.message)
+    }
+  } catch {
+    // 后台报错时不能静默，要明确告诉用户没保存上
+    ElMessage.error('保存失败，请重试')
   }
 }
 
 async function removeCategory(cat) {
   try {
+    // 先弹确认框；用户点"取消"会走到 catch 里，直接返回什么都不做
     await ElMessageBox.confirm(`确定删除分类「${cat.name}」吗？`, '删除确认', {
       type: 'warning',
       confirmButtonText: '删除',
@@ -82,12 +97,17 @@ async function removeCategory(cat) {
   } catch {
     return
   }
-  const r = await window.api.deleteCategory(cat.id)
-  if (r.ok) {
-    ElMessage.success('已删除')
-    loadCategories()
-  } else {
-    ElMessage.error(r.message)
+  try {
+    const r = await window.api.deleteCategory(cat.id)
+    if (r.ok) {
+      ElMessage.success('已删除')
+      loadCategories()
+    } else {
+      // 后台校验不通过（有账单、还有小类等），把原因原样告诉用户
+      ElMessage.error(r.message)
+    }
+  } catch {
+    ElMessage.error('删除失败，请重试')
   }
 }
 

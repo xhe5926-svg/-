@@ -28,6 +28,9 @@ const INCOME_CATEGORIES = [
 export function initDatabase(dbPath) {
   db = new Database(dbPath)
   db.pragma('journal_mode = WAL')
+  // 打开"外键约束"开关：表结构里写了"账单必须属于真实存在的分类"，
+  // 这个开关打开后这条规则才真正生效，乱填的分类编号会被数据库拒绝
+  db.pragma('foreign_keys = ON')
   db.exec(`
     CREATE TABLE IF NOT EXISTS categories (
       id INTEGER PRIMARY KEY,
@@ -61,6 +64,7 @@ export function initDatabase(dbPath) {
   seedCategoriesIfEmpty()
 }
 
+// 首次建库时把 74 个预置分类写进去；已有分类（哪怕是老库）就跳过，不重复写入
 function seedCategoriesIfEmpty() {
   const { c } = db.prepare('SELECT COUNT(*) AS c FROM categories').get()
   if (c > 0) return
@@ -78,6 +82,7 @@ function seedCategoriesIfEmpty() {
 }
 
 // —— 分类 ——
+// 返回全部分类（大类 + 小类混在一起），界面自己按 parentId 区分层级
 export function getCategories() {
   return db
     .prepare(
@@ -87,6 +92,7 @@ export function getCategories() {
 }
 
 // —— 分类管理（用户新增/改名/删除自己创建的分类；预置分类不可动）——
+// 分类名的检查：不能为空、不能超过 20 个字；通过时返回整理好的名字（去掉首尾空格）
 function validateName(name) {
   name = (name || '').trim()
   if (!name) return { ok: false, message: '分类名称不能为空' }
@@ -125,6 +131,7 @@ export function updateCategory(id, { name }) {
   return { ok: true }
 }
 
+// 删除分类，按产品文档的删除保护规则逐项检查（预置/有子类/有账单都不能删）
 export function deleteCategory(id) {
   const cat = db.prepare('SELECT is_custom AS isCustom FROM categories WHERE id = ?').get(id)
   if (!cat) return { ok: false, message: '分类不存在' }
@@ -138,7 +145,22 @@ export function deleteCategory(id) {
 }
 
 // —— 记账 ——
+
+// 记账前检查：收支类型、金额、分类是否都合理（相当于收银台的验钞机，防止坏数据进账本）
+function validateTransaction(type, amountCents, categoryId) {
+  if (type !== 'expense' && type !== 'income') return { ok: false, message: '收支类型不合法' }
+  if (typeof amountCents !== 'number' || !Number.isInteger(amountCents) || amountCents <= 0)
+    return { ok: false, message: '金额必须大于 0' }
+  if (typeof categoryId !== 'number' || !Number.isInteger(categoryId))
+    return { ok: false, message: '分类不存在' }
+  const cat = db.prepare('SELECT id FROM categories WHERE id = ?').get(categoryId)
+  if (!cat) return { ok: false, message: '分类不存在' }
+  return { ok: true }
+}
+
 export function addTransaction({ type, amountCents, categoryId, note, date }) {
+  const v = validateTransaction(type, amountCents, categoryId)
+  if (!v.ok) return v
   const info = db
     .prepare(
       'INSERT INTO transactions (type, amount_cents, category_id, note, date, created_at) VALUES (?, ?, ?, ?, ?, ?)'
@@ -148,6 +170,8 @@ export function addTransaction({ type, amountCents, categoryId, note, date }) {
 }
 
 export function updateTransaction(id, { type, amountCents, categoryId, note, date }) {
+  const v = validateTransaction(type, amountCents, categoryId)
+  if (!v.ok) return v
   db.prepare(
     'UPDATE transactions SET type = ?, amount_cents = ?, category_id = ?, note = ?, date = ? WHERE id = ?'
   ).run(type, amountCents, categoryId, note || '', date, id)
@@ -238,11 +262,13 @@ export function getDailyExpense(month) {
 }
 
 // —— 预算 ——
+// 读本月预算（分）；还没设过就返回 0，界面按"没设预算"处理
 export function getBudget() {
   const row = db.prepare("SELECT value FROM settings WHERE key = 'monthly_budget_cents'").get()
   return row ? Number(row.value) : 0
 }
 
+// 保存本月预算（分）；键已存在时用"冲突则更新"的写法覆盖旧值
 export function setBudget(cents) {
   db.prepare(
     "INSERT INTO settings (key, value) VALUES ('monthly_budget_cents', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value"
@@ -264,6 +290,7 @@ export function getAllTransactions() {
     .all()
 }
 
+// 关闭数据库（应用退出时调用，保证数据完整落盘）
 export function close() {
   if (db) {
     db.close()
