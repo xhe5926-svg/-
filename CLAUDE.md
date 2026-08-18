@@ -102,6 +102,7 @@
 | 2026-08-16 | 分类管理：删除规则 | 有账单记录的分类不能直接删 | 保护用户数据，需先把账单改成其他分类才能删除 |
 | 2026-08-17 | 代码托管 | 推送到 GitHub（SSH 钥匙免密） | 云端备份代码、可分享；更新了"不上传网络"的旧决定；仓库地址 git@github.com:xhe5926-svg/-.git |
 | 2026-08-17 | 单元测试框架 | 方案A：Vitest | 与项目用的 Vite 同一家、配置最少、跑得最快、资料全 |
+| 2026-08-18 | 提交前质量检查 | git 钩子 + 标记文件 | 防止未测试、未审查的代码入库；钩子跟代码走，tester/quality-engineer 通过后写标记 |
 
 ---
 
@@ -150,6 +151,7 @@
 - [x] Windows 打包验证（`dist/黑马记账 Setup 1.0.0.exe`，win-unpacked 为免安装版；v1.1.0 已重新打包含分类管理）
 - [x] git 版本管理（首版已提交：v1.0.0；提交签名：黑马记账 <heima@local>）
 - [ ] Mac 打包（需 Mac 电脑，代码相同）
+- [x] 提交质量检查（钩子 + 标记文件，提交被拦时先跑「提交管家」）
 
 ### 开发小记（重要事实，避免重复踩坑）
 
@@ -160,3 +162,4 @@
 5. **打包配置**：electron-builder.yml 里 `npmRebuild: false`（本机无 Visual Studio 编译环境；better-sqlite3 是 N-API 通用模块，dev 验证过的二进制直接可用）。打包前需 `export ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/` 走国内镜像下载打包工具。
 6. **用户数据目录**：实测打包版与开发版共用 `%APPDATA%\heima-bookkeeping\heima.db`（Electron 读 package.json 的 name 而非 productName）。数据互通无碍；若将来想改目录名需在 main 里 `app.setName()` 并迁移数据。
 7. **数据库升级**：老版本数据库没有 `is_custom` 列（v1.0.0 建的库），`initDatabase` 里用 `PRAGMA table_info` 检测并 `ALTER TABLE` 自动补列，新老版本数据兼容。以后改表结构照此办理（先检测再迁移，别直接改 CREATE TABLE 就完事）。
+8. **提交质量检查钩子**：`.quality/` 下的 `tests.pass`、`audit.pass` 是测试和质量检查的"通过标记"（不入库，每次检查重新生成，由 tester / quality-engineer 两个 agent 在全部通过后写入）。钩子在 `hooks/pre-commit`（跟代码走），本机需执行 `git config core.hooksPath hooks` 启用（本机配置，换电脑必须重新执行；同时要同步 `~/.claude/agents/` 和 `~/.claude/skills/` 全套）。提交被拦截 = 没跑检查或检查后代码又改了 → 先让「提交管家」跑一遍；紧急时可用 `git commit --no-verify` 绕过（不推荐）。

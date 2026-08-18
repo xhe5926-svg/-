@@ -1,0 +1,61 @@
+#!/bin/sh
+# 提交管家钩子：提交前检查"单元测试通过"和"质量检查通过"两个标记文件
+# 标记文件：.quality/tests.pass（测试）与 .quality/audit.pass（质量检查）
+# 规则：
+#   1. 没有暂存文件 → 放行（如 git commit --allow-empty）
+#   2. 两个标记文件必须都存在，否则拒绝
+#   3. 新鲜度：任一被暂存文件（工作区）的 mtime 晚于任一标记文件
+#      → 视为"检查之后又改了代码"，拒绝
+#   4. 暂存删除的文件（工作区已不存在）自动跳过 mtime 比较
+
+# 无论从哪里执行提交，都先回到仓库根目录
+cd "$(git rev-parse --show-toplevel)" || exit 1
+
+# --- 1. 暂存文件为空 → 直接放行（如 git commit --allow-empty）---
+# 用 --quiet 只判断"暂存区有没有差异"，不关心内容，各系统通用
+if git diff --cached --quiet; then
+  exit 0
+fi
+
+# --- 2. 两个标记文件必须都存在 ---
+missing=""
+[ -f .quality/tests.pass ] || missing="$missing .quality/tests.pass"
+[ -f .quality/audit.pass ] || missing="$missing .quality/audit.pass"
+if [ -n "$missing" ]; then
+  missing="${missing# }"  # 去掉拼文件名单时留下的前导空格
+  echo ""
+  echo "提交被拦截：还没有通过质量检查，缺少标记文件：$missing"
+  echo "请先让「提交管家」跑一遍单元测试和质量检查，"
+  echo "检查全部通过后会自动生成标记文件，再重新提交。"
+  echo ""
+  exit 1
+fi
+
+# --- 3. 新鲜度检查 ---
+# 取文件的"最后修改时间"（秒）。注意：下面用 stat -c %Y 是
+# Linux / Git for Windows 的写法；若将来在 macOS 上开发，
+# 把两处 stat -c %Y 换成 stat -f %m 即可（macOS 的 stat 语法不同）
+# 基准 = 两个标记中较旧的那个（更严格）：
+# 任一暂存文件晚于任一标记，都说明那次检查之后又改了代码
+t1=$(stat -c %Y .quality/tests.pass)
+t2=$(stat -c %Y .quality/audit.pass)
+if [ "$t1" -lt "$t2" ]; then base="$t1"; else base="$t2"; fi
+
+# 管道解释：
+#   git -z 输出（NUL 分隔，安全处理空格/中文文件名）直接进 xargs -0
+#   stat 失败的（暂存删除的文件）被 2>/dev/null 静默跳过
+#   awk 找最大 mtime：max>0 且 max>base 时 exit 0（= 有过期文件）
+# 管道的退出码 = 最后一个命令 awk 的退出码
+git -c core.quotepath=false diff --cached --name-only -z \
+  | xargs -0 -n1 stat -c %Y -- 2>/dev/null \
+  | awk -v b="$base" 'BEGIN{max=0}{if($1>max)max=$1}END{exit (max>0 && max>b)?0:1}'
+
+if [ $? -eq 0 ]; then
+  echo ""
+  echo "提交被拦截：有文件在检查通过之后又被改动过（检查结果已过期）。"
+  echo "请重新让「提交管家」再跑一遍检查，全部通过（更新标记）后再提交。"
+  echo ""
+  exit 1
+fi
+
+exit 0

@@ -11,3 +11,6 @@ heima-bookkeeping/
 
 # Claude Code 本机配置
 .claude/
+
+# 提交质量检查标记（每次检查重新生成，不入库）
+.quality/
